@@ -1,0 +1,23 @@
+# Chave da API — NUNCA enviar ao GitHub
+.env
+
+# Dados salvos localmente (vagas, perfis, configurações)
+vagas_salvas.json
+perfis_triagem.json
+criterios_salvos.json
+config_app.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Streamlit credentials
+.streamlit/credentials.toml
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,101 @@
+====================================================
+  AVALIADOR DE CURRÍCULOS COM IA — GUIA DE INSTALAÇÃO
+====================================================
+
+Siga os passos abaixo para colocar o app para funcionar
+no seu computador. Tempo estimado: 10 minutos.
+
+
+─────────────────────────────────────────────
+PASSO 1 — INSTALAR O PYTHON
+─────────────────────────────────────────────
+1. Acesse: https://www.python.org/downloads/
+2. Clique em "Download Python" (versão mais recente)
+3. Execute o instalador
+4. IMPORTANTE: marque a opção "Add Python to PATH"
+   antes de clicar em "Install Now"
+5. Aguarde a instalação terminar
+
+
+─────────────────────────────────────────────
+PASSO 2 — INSTALAR AS DEPENDÊNCIAS
+─────────────────────────────────────────────
+1. Abra o terminal (Prompt de Comando ou PowerShell)
+   Dica: pressione Windows + R, digite "cmd" e Enter
+2. Navegue até a pasta do projeto. Exemplo:
+   cd "C:\Users\SEU_USUARIO\OneDrive - Accenture\Desktop\Projeto IA"
+3. Execute o comando:
+   python -m pip install -r requirements.txt
+4. Aguarde o download e instalação (pode demorar alguns minutos)
+
+
+─────────────────────────────────────────────
+PASSO 3 — OBTER A CHAVE DA API DO GEMINI
+─────────────────────────────────────────────
+1. Acesse: https://aistudio.google.com
+2. Faça login com sua conta Google
+3. Clique em "Get API Key" → "Create API key"
+4. Copie a chave gerada
+
+
+─────────────────────────────────────────────
+PASSO 4 — CONFIGURAR A CHAVE NO PROJETO
+─────────────────────────────────────────────
+1. Na pasta do projeto, abra o arquivo ".env" com
+   o Bloco de Notas
+   (se não aparecer, ative "Mostrar arquivos ocultos"
+    no Explorador de Arquivos)
+2. Substitua o texto:
+   GOOGLE_API_KEY=sua_chave_aqui
+   pela sua chave:
+   GOOGLE_API_KEY=AIza... (sua chave real aqui)
+3. Salve o arquivo
+
+
+─────────────────────────────────────────────
+PASSO 5 — EXECUTAR O APP
+─────────────────────────────────────────────
+1. Abra o terminal na pasta do projeto
+2. Execute o comando:
+   python -m streamlit run app.py
+3. O navegador abrirá automaticamente com o app
+4. Se não abrir, acesse manualmente: http://localhost:8501
+
+
+─────────────────────────────────────────────
+COMO USAR O APP
+─────────────────────────────────────────────
+1. Faça upload dos currículos (PDF, DOCX ou TXT)
+   — pode selecionar vários ao mesmo tempo
+2. Preencha a Descrição da Vaga e a Triagem de Perfil
+   — ou carregue uma vaga/perfil já salvos
+3. Clique em "Analisar Currículos"
+4. Aguarde a análise (lotes automáticos para muitos CVs)
+5. Veja o Dashboard, Ranking, Comparação e Perguntas
+6. Exporte o Ranking para Excel com um clique
+
+
+─────────────────────────────────────────────
+DÚVIDAS FREQUENTES
+─────────────────────────────────────────────
+P: O app abriu mas deu erro de API Key.
+R: Verifique se o arquivo .env está correto (Passo 4).
+
+P: O terminal não reconhece o comando "python".
+R: Reinstale o Python marcando "Add Python to PATH".
+
+P: A análise parou no meio.
+R: A API tem limite de 15 chamadas/minuto. O app
+   faz pausas automáticas entre lotes. Aguarde.
+
+P: Como executar da próxima vez?
+R: Só o Passo 5 — abra o terminal e rode o comando.
+
+
+─────────────────────────────────────────────
+CONTATO
+─────────────────────────────────────────────
+Dúvidas? Entre em contato com:
+fabiana.tarrio@accenture.com
+
+====================================================
