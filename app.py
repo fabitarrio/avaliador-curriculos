@@ -8,6 +8,7 @@ import re
 import time
 import io
 import json
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 import plotly.graph_objects as go
@@ -16,14 +17,15 @@ import xlsxwriter
 
 load_dotenv()
 
-LOTE_TAMANHO    = 11
-PAUSA_LOTE      = 62
+LOTE_TAMANHO      = 11
+PAUSA_LOTE        = 62
 ARQUIVO_VAGAS     = os.path.join(os.path.dirname(__file__), "vagas_salvas.json")
 ARQUIVO_PERFIS    = os.path.join(os.path.dirname(__file__), "perfis_triagem.json")
 ARQUIVO_CRITERIOS = os.path.join(os.path.dirname(__file__), "criterios_salvos.json")
 ARQUIVO_CONFIG    = os.path.join(os.path.dirname(__file__), "config_app.json")
+ARQUIVO_HISTORICO = os.path.join(os.path.dirname(__file__), "historico_analises.json")
 
-# ── Persistência de vagas ──────────────────────────────────────────────────────
+# ── Persistência ───────────────────────────────────────────────────────────────
 
 def _ler(caminho: str) -> dict:
     if os.path.exists(caminho):
@@ -53,21 +55,61 @@ def deletar_criterio(nome: str):
 def carregar_config() -> dict: return _ler(ARQUIVO_CONFIG)
 def salvar_config(d: dict):    _gravar(ARQUIVO_CONFIG, d)
 
+def carregar_historico() -> list:
+    return _ler(ARQUIVO_HISTORICO).get("entradas", [])
+
+def salvar_historico_entrada(entrada: dict):
+    dados = _ler(ARQUIVO_HISTORICO)
+    entradas = dados.get("entradas", [])
+    entradas.insert(0, entrada)
+    _gravar(ARQUIVO_HISTORICO, {"entradas": entradas[:20]})
+
+# ── Setup da página ────────────────────────────────────────────────────────────
+
 st.set_page_config(
     page_title="Avaliador de Currículos",
     page_icon="📋",
     layout="wide",
 )
 
-# carrega score mínimo salvo (somente na primeira renderização da sessão)
 if "score_corte" not in st.session_state:
     cfg = carregar_config()
     st.session_state["score_corte"] = cfg.get("score_corte", 75)
 
+# ── Sidebar: Histórico de Triagens ─────────────────────────────────────────────
+
+with st.sidebar:
+    st.header("🕓 Histórico de Triagens")
+    historico = carregar_historico()
+    if not historico:
+        st.caption("Nenhuma triagem salva ainda.")
+    else:
+        for i, entrada in enumerate(historico):
+            with st.expander(f"📅 {entrada['timestamp']} — {entrada['total']} CVs"):
+                st.caption(entrada["vaga_preview"])
+                st.caption(f"✅ {entrada['aprovados']} aprovados · Score mínimo: {entrada['score_corte']}")
+                if st.button("📂 Carregar esta triagem", key=f"hist_{i}", use_container_width=True):
+                    st.session_state["resultados"]        = entrada["resultados"]
+                    st.session_state["descricao_vaga"]    = entrada["descricao_vaga"]
+                    st.session_state["score_corte_usado"] = entrada["score_corte"]
+                    st.session_state["criterios_usados"]  = entrada.get("criterios_usados", {})
+                    st.rerun()
+
+    st.divider()
+    if st.session_state.get("resultados"):
+        if st.button("🗑️ Limpar Resultados Atuais", use_container_width=True):
+            for k in ["resultados", "descricao_vaga", "score_corte_usado", "ranking_base",
+                      "comparacao", "criterios_usados"]:
+                st.session_state.pop(k, None)
+            for k in list(st.session_state.keys()):
+                if k.startswith("roteiro_"):
+                    del st.session_state[k]
+            st.rerun()
+
 st.title("📋 Avaliador de Currículos")
 st.caption("Analise candidatos com base na vaga e nos critérios esperados")
 
-# ── Funções de extração de texto ──────────────────────────────────────────────
+# ── Funções de extração de texto ───────────────────────────────────────────────
 
 def extrair_texto_pdf(arquivo) -> str:
     texto = []
@@ -82,11 +124,9 @@ def extrair_texto_docx(arquivo) -> str:
     arquivo.seek(0)
     doc = docx.Document(arquivo)
     linhas = []
-    # parágrafos normais
     for p in doc.paragraphs:
         if p.text.strip():
             linhas.append(p.text.strip())
-    # texto dentro de tabelas (layout de CV em colunas)
     for tabela in doc.tables:
         for linha in tabela.rows:
             for celula in linha.cells:
@@ -118,6 +158,16 @@ def extrair_veredicto(texto: str) -> str:
         return match.group(1).capitalize()
     return "Indefinido"
 
+def extrair_scores_criterios(texto: str, criterios: list) -> dict:
+    scores = {}
+    for crit in criterios:
+        match = re.search(
+            rf'\*\*{re.escape(crit)}\*\*\s*:\s*NOTA:\s*(\d+)',
+            texto, re.IGNORECASE
+        )
+        scores[crit] = int(match.group(1)) if match else 0
+    return scores
+
 def medalha(posicao: int) -> str:
     return {1: "🥇", 2: "🥈", 3: "🥉"}.get(posicao, f"{posicao}º")
 
@@ -140,14 +190,13 @@ def gerar_excel(ranking: list, resultados: dict) -> bytes:
     wb = xlsxwriter.Workbook(output, {"in_memory": True})
     ws = wb.add_worksheet("Ranking")
 
-    # formatos
-    fmt_header  = wb.add_format({"bold": True, "bg_color": "#1a1a2e", "font_color": "#ffffff", "border": 1, "align": "center", "valign": "vcenter"})
-    fmt_aprovado = wb.add_format({"bg_color": "#d4edda", "font_color": "#155724", "bold": True, "border": 1, "align": "center"})
+    fmt_header    = wb.add_format({"bold": True, "bg_color": "#1a1a2e", "font_color": "#ffffff", "border": 1, "align": "center", "valign": "vcenter"})
+    fmt_aprovado  = wb.add_format({"bg_color": "#d4edda", "font_color": "#155724", "bold": True, "border": 1, "align": "center"})
     fmt_reprovado = wb.add_format({"bg_color": "#f8d7da", "font_color": "#721c24", "bold": True, "border": 1, "align": "center"})
-    fmt_normal  = wb.add_format({"border": 1, "valign": "top", "text_wrap": True})
-    fmt_center  = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True})
-    fmt_score_alto = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True, "font_color": "#155724"})
-    fmt_score_med  = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True, "font_color": "#856404"})
+    fmt_normal    = wb.add_format({"border": 1, "valign": "top", "text_wrap": True})
+    fmt_center    = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True})
+    fmt_score_alto  = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True, "font_color": "#155724"})
+    fmt_score_med   = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True, "font_color": "#856404"})
     fmt_score_baixo = wb.add_format({"border": 1, "align": "center", "valign": "vcenter", "bold": True, "font_color": "#721c24"})
 
     headers = ["Posição", "Candidato", "Score", "Veredicto", "Pontos Fortes", "Lacunas", "Recomendação"]
@@ -156,13 +205,11 @@ def gerar_excel(ranking: list, resultados: dict) -> bytes:
     for col, (h, w) in enumerate(zip(headers, widths)):
         ws.set_column(col, col, w)
         ws.write(0, col, h, fmt_header)
-
     ws.set_row(0, 20)
 
     for i, (nome, score, veredicto) in enumerate(ranking):
         row = i + 1
         ws.set_row(row, 80)
-        pos = i + 1
         nome_curto = nome.rsplit(".", 1)[0]
         analise = resultados[nome]["analise"]
         fortes  = extrair_secao(analise, "Pontos Fortes")
@@ -172,7 +219,7 @@ def gerar_excel(ranking: list, resultados: dict) -> bytes:
         fmt_score = fmt_score_alto if score >= 80 else (fmt_score_med if score >= 60 else fmt_score_baixo)
         fmt_verd  = fmt_aprovado if veredicto == "Aprovado" else fmt_reprovado
 
-        ws.write(row, 0, pos, fmt_center)
+        ws.write(row, 0, i + 1, fmt_center)
         ws.write(row, 1, nome_curto, fmt_normal)
         ws.write(row, 2, f"{score}/100", fmt_score)
         ws.write(row, 3, veredicto, fmt_verd)
@@ -183,7 +230,24 @@ def gerar_excel(ranking: list, resultados: dict) -> bytes:
     wb.close()
     return output.getvalue()
 
-# ── Análise via Gemini ─────────────────────────────────────────────────────────
+# ── API helpers ────────────────────────────────────────────────────────────────
+
+def testar_api_key() -> tuple[bool, str]:
+    api_key = os.getenv("GOOGLE_API_KEY", "")
+    if not api_key or api_key == "sua_chave_aqui":
+        return False, "⚠️ API Key não configurada. Verifique o arquivo `.env`."
+    try:
+        genai.configure(api_key=api_key)
+        modelo = genai.GenerativeModel("gemini-3.6-flash")
+        modelo.generate_content("Responda apenas: OK")
+        return True, ""
+    except ResourceExhausted:
+        return False, "⚠️ Rate limit atingido. Aguarde 1 minuto e tente novamente."
+    except GoogleAPIError as e:
+        return False, f"⚠️ Erro na API do Google: {str(e)}"
+    except Exception as e:
+        return False, f"⚠️ Não foi possível conectar à API: {str(e)}"
+
 
 def analisar_curriculo(nome_arquivo: str, texto_cv: str, descricao_vaga: str, expectativas: str, criterios: dict = None, score_corte: int = 75) -> tuple[str, str, str]:
     api_key = os.getenv("GOOGLE_API_KEY", "")
@@ -275,7 +339,7 @@ SEPARE as duas partes com exatamente esta linha:
         resposta = modelo.generate_content(prompt_unico)
         texto_completo = resposta.text
         if "===PERGUNTAS===" in texto_completo:
-            partes = texto_completo.split("===PERGUNTAS===", 1)
+            partes    = texto_completo.split("===PERGUNTAS===", 1)
             analise   = partes[0].strip()
             perguntas = partes[1].strip()
         else:
@@ -435,7 +499,6 @@ with col_esq:
             st.caption(f"• {a.name}")
 
 with col_dir:
-    # ── Descrição da Vaga ─────────────────────────────────────────────────────
     st.subheader("💼 Descrição da Vaga & Requisitos")
 
     vagas = carregar_vagas()
@@ -471,7 +534,6 @@ with col_dir:
                 st.success(f'✅ Vaga "{nome_vaga}" salva!')
                 st.rerun()
 
-    # ── Triagem de Perfil ─────────────────────────────────────────────────────
     st.subheader("🎯 Triagem de Perfil")
 
     perfis = carregar_perfis()
@@ -509,7 +571,7 @@ with col_dir:
 
 st.divider()
 
-# ── Critérios de Avaliação ────────────────────────────────────────────────────
+# ── Critérios de Avaliação ─────────────────────────────────────────────────────
 CRITERIOS_PADRAO = {
     "Habilidades Técnicas":  40,
     "Experiência Relevante": 25,
@@ -522,7 +584,6 @@ CRITERIOS_PADRAO = {
 with st.expander("⚖️ Configurar Critérios e Pesos de Avaliação", expanded=False):
     st.caption("Selecione os critérios que importam para esta vaga e ajuste os pesos. O total deve somar 100%.")
 
-    # ── Carregar configuração salva ───────────────────────────────────────────
     configs_salvas = carregar_criterios()
     if configs_salvas:
         cc1, cc2, cc3 = st.columns([3, 1, 1])
@@ -576,7 +637,6 @@ with st.expander("⚖️ Configurar Critérios e Pesos de Avaliação", expanded
             diff = 100 - total_pesos
             st.warning(f"⚠️ Total: {total_pesos}% — {'falta' if diff > 0 else 'excede'} {abs(diff)}% para chegar em 100%.")
 
-        # ── Salvar configuração atual ─────────────────────────────────────────
         st.divider()
         sc1, sc2 = st.columns([3, 1])
         with sc1:
@@ -598,7 +658,6 @@ with st.expander("⚖️ Configurar Critérios e Pesos de Avaliação", expanded
     else:
         st.warning("Selecione pelo menos um critério.")
 
-# guarda critérios na sessão para uso na análise
 criterios_para_analise = pesos if pesos and sum(pesos.values()) == 100 else CRITERIOS_PADRAO
 
 col_score, col_btn = st.columns([1, 3])
@@ -621,13 +680,19 @@ if analisar:
     elif not expectativas.strip():
         st.warning("Preencha a triagem de perfil.")
     else:
-        # persiste score mínimo escolhido
+        # ── Validar API key antes de iniciar ──────────────────────────────────
+        with st.spinner("🔌 Verificando conexão com a API Gemini..."):
+            api_ok, api_msg = testar_api_key()
+        if not api_ok:
+            st.error(api_msg)
+            st.stop()
+
         salvar_config({"score_corte": score_corte})
 
         candidatos = [(a.name, extrair_texto(a)) for a in arquivos]
-        total = len(candidatos)
-        lotes = [candidatos[i:i + LOTE_TAMANHO] for i in range(0, total, LOTE_TAMANHO)]
-        num_lotes = len(lotes)
+        total      = len(candidatos)
+        lotes      = [candidatos[i:i + LOTE_TAMANHO] for i in range(0, total, LOTE_TAMANHO)]
+        num_lotes  = len(lotes)
 
         st.info(
             f"📦 **{total} CVs** divididos em **{num_lotes} lote(s)** de até {LOTE_TAMANHO} "
@@ -640,12 +705,12 @@ if analisar:
         erros      = []
         concluidos = 0
 
-        PAUSA_ENTRE_CVS = 4  # segundos entre chamadas individuais
+        PAUSA_ENTRE_CVS = 4
 
         for idx_lote, lote in enumerate(lotes, start=1):
             status_txt.markdown(f"🔄 **Lote {idx_lote}/{num_lotes}** — analisando {len(lote)} currículo(s)...")
 
-            cvs_rate_limit = []  # CVs que falharam por rate limit neste lote
+            cvs_rate_limit = []
 
             for idx_cv, (nome, texto) in enumerate(lote):
                 status_txt.markdown(
@@ -661,11 +726,9 @@ if analisar:
                     concluidos += 1
                     progress.progress(concluidos / total, text=f"Concluído: {nome_arquivo} ({concluidos}/{total})")
 
-                # pausa entre CVs para não sobrecarregar a API
                 if idx_cv < len(lote) - 1:
                     time.sleep(PAUSA_ENTRE_CVS)
 
-            # retry dos CVs com rate limit — espera 65s e tenta novamente
             if cvs_rate_limit:
                 for seg in range(65, 0, -1):
                     status_txt.markdown(
@@ -697,7 +760,7 @@ if analisar:
         if erros:
             st.warning(f"⚠️ {len(erros)} currículo(s) com erro: {', '.join(erros)}.")
 
-        # aplica score mínimo como critério definitivo (client-side)
+        # aplica score mínimo client-side
         for nome_r, dados_r in resultados.items():
             if extrair_score(dados_r["analise"]) < score_corte:
                 dados_r["analise"] = re.sub(
@@ -707,17 +770,32 @@ if analisar:
                     flags=re.IGNORECASE,
                 )
 
-        # salva na sessão para a comparação funcionar após o rerun
-        st.session_state["resultados"]     = resultados
-        st.session_state["descricao_vaga"] = descricao_vaga
+        st.session_state["resultados"]        = resultados
+        st.session_state["descricao_vaga"]    = descricao_vaga
         st.session_state["score_corte_usado"] = score_corte
+        st.session_state["criterios_usados"]  = criterios_para_analise
 
-# ── Exibe resultados (da sessão, persiste após interações) ────────────────────
-if "resultados" in st.session_state and st.session_state["resultados"]:
+        # salvar no histórico
+        aprovados_hist = sum(
+            1 for d in resultados.values()
+            if extrair_veredicto(d["analise"]) == "Aprovado"
+        )
+        salvar_historico_entrada({
+            "timestamp":      datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "vaga_preview":   (descricao_vaga[:80] + "...") if len(descricao_vaga) > 80 else descricao_vaga,
+            "total":          len(resultados),
+            "aprovados":      aprovados_hist,
+            "score_corte":    score_corte,
+            "criterios_usados": criterios_para_analise,
+            "resultados":     resultados,
+            "descricao_vaga": descricao_vaga,
+        })
+
+# ── Exibe resultados ───────────────────────────────────────────────────────────
+if st.session_state.get("resultados"):
     resultados     = st.session_state["resultados"]
     descricao_vaga = st.session_state.get("descricao_vaga", "")
 
-    # ── Ranking base ──────────────────────────────────────────────────────────
     _score_corte = st.session_state.get("score_corte_usado", st.session_state.get("score_corte", 75))
     ranking_base = []
     for nome, dados in resultados.items():
@@ -729,7 +807,7 @@ if "resultados" in st.session_state and st.session_state["resultados"]:
     ranking_base.sort(key=lambda x: x[1], reverse=True)
     st.session_state["ranking_base"] = ranking_base
 
-    # ── Dashboard Visual ──────────────────────────────────────────────────────
+    # ── Dashboard ─────────────────────────────────────────────────────────────
     st.subheader("📈 Dashboard")
 
     total_c    = len(ranking_base)
@@ -784,27 +862,71 @@ if "resultados" in st.session_state and st.session_state["resultados"]:
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
+    # Distribuição de scores por faixa
+    faixas_labels = ["0–25", "26–50", "51–75", "76–100"]
+    faixas_vals   = [0, 0, 0, 0]
+    for _, s, _ in ranking_base:
+        if s <= 25:   faixas_vals[0] += 1
+        elif s <= 50: faixas_vals[1] += 1
+        elif s <= 75: faixas_vals[2] += 1
+        else:         faixas_vals[3] += 1
+
+    fig_hist = go.Figure(go.Bar(
+        x=faixas_labels,
+        y=faixas_vals,
+        marker_color=["#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c"],
+        text=faixas_vals,
+        textposition="outside",
+    ))
+    fig_hist.update_layout(
+        title="Distribuição de Scores por Faixa",
+        yaxis=dict(range=[0, max(faixas_vals) + 1.5]),
+        xaxis_title="Faixa de Score",
+        yaxis_title="Candidatos",
+        margin=dict(t=40, b=10, l=10, r=10),
+        height=260,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#e8e8f0",
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
+
     st.divider()
 
-    # ── Filtros + Ranking ─────────────────────────────────────────────────────
+    # ── Filtros + Ranking ──────────────────────────────────────────────────────
     st.subheader("🏆 Ranking de Candidatos")
 
-    f1, f2, f3 = st.columns([2, 2, 1])
+    criterios_usados = st.session_state.get("criterios_usados", {})
+    opcoes_ordenacao = ["Score Total"] + list(criterios_usados.keys())
+
+    f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
     with f1:
         score_min = st.slider("Score mínimo", 0, 100, 0, step=5, key="filtro_score")
     with f2:
         filtro_verd = st.radio("Veredicto", ["Todos", "Aprovados", "Reprovados"], horizontal=True, key="filtro_verd")
     with f3:
+        ordenar_por = st.selectbox("Ordenar por", opcoes_ordenacao, key="ordenar_por")
+    with f4:
         excel_bytes = gerar_excel(ranking_base, resultados)
         st.download_button(
-            label="⬇️ Exportar Excel",
+            label="⬇️ Excel",
             data=excel_bytes,
             file_name="ranking_candidatos.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+    # ordenação por critério específico
+    if ordenar_por != "Score Total" and criterios_usados:
+        ranking_display = sorted(
+            ranking_base,
+            key=lambda x: extrair_scores_criterios(resultados[x[0]]["analise"], [ordenar_por]).get(ordenar_por, 0),
+            reverse=True,
+        )
+    else:
+        ranking_display = ranking_base
+
     ranking_filtrado = [
-        (n, s, v) for n, s, v in ranking_base
+        (n, s, v) for n, s, v in ranking_display
         if s >= score_min and (
             filtro_verd == "Todos"
             or (filtro_verd == "Aprovados"  and v == "Aprovado")
@@ -821,16 +943,20 @@ if "resultados" in st.session_state and st.session_state["resultados"]:
             nome_curto = nome.rsplit(".", 1)[0]
             pos_real   = ranking_base.index((nome, score, veredicto)) + 1
             with cols[col_idx]:
+                label_extra = ""
+                if ordenar_por != "Score Total" and criterios_usados:
+                    nota_crit = extrair_scores_criterios(resultados[nome]["analise"], [ordenar_por]).get(ordenar_por, 0)
+                    label_extra = f"{ordenar_por[:12]}: {nota_crit}"
                 st.metric(
                     label=f"{medalha(pos_real)} {nome_curto}",
                     value=f"{score}/100",
-                    delta=badge_veredicto(veredicto),
+                    delta=label_extra if label_extra else badge_veredicto(veredicto),
                     delta_color="normal" if veredicto == "Aprovado" else "inverse",
                 )
 
     st.divider()
 
-    # ── Comparar Candidatos ───────────────────────────────────────────────────
+    # ── Comparar Candidatos ────────────────────────────────────────────────────
     st.subheader("🔍 Comparar Candidatos")
     nomes_disponiveis = [nome.rsplit(".", 1)[0] for nome in resultados.keys()]
     nomes_para_chave  = {nome.rsplit(".", 1)[0]: nome for nome in resultados.keys()}
@@ -863,7 +989,7 @@ if "resultados" in st.session_state and st.session_state["resultados"]:
 
     st.divider()
 
-    # ── Abas por candidato ────────────────────────────────────────────────────
+    # ── Abas por candidato ─────────────────────────────────────────────────────
     st.subheader(f"📋 Análise Detalhada — {len(resultados)} candidato(s)")
     ranking = st.session_state.get("ranking_base", ranking_base)
     nomes_ordenados = [(nome, veredicto) for nome, _, veredicto in ranking]
