@@ -80,3 +80,11 @@ git push origin master
 If pushing requires authentication, use a Personal Access Token (ghp_...) as the password, or store it in Windows Credential Manager under `git:https://github.com`.
 
 **Files that must never be committed:** `.env`, `vagas_salvas.json`, `perfis_triagem.json`, `criterios_salvos.json`, `config_app.json`, `.streamlit/credentials.toml`
+
+## Regra de Git
+Após QUALQUER alteração no projeto, execute automaticamente:
+1. git add .
+2. git commit -m "descrição da alteração feita"
+3. git push origin main
+
+
