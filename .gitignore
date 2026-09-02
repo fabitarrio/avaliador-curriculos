@@ -6,6 +6,7 @@ vagas_salvas.json
 perfis_triagem.json
 criterios_salvos.json
 config_app.json
+historico_analises.json
 
 # Python
 __pycache__/
