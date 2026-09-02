@@ -67,7 +67,7 @@ def salvar_historico_entrada(entrada: dict):
 # ── Setup da página ────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Avaliador de Currículos",
+    page_title="Avaliador de CV",
     page_icon="📋",
     layout="wide",
 )
@@ -106,7 +106,7 @@ with st.sidebar:
                     del st.session_state[k]
             st.rerun()
 
-st.title("📋 Avaliador de Currículos")
+st.title("📋 Avaliador de CV")
 st.caption("Analise candidatos com base na vaga e nos critérios esperados")
 
 # ── Funções de extração de texto ───────────────────────────────────────────────
