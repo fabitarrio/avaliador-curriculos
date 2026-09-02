@@ -1,0 +1,4 @@
+- Criar um arquivo /init para criar um arquivo claude.md com as instruções para claude sobre o projeto
+Sempre que fizer uma atualização do projeto atualize minha versao do GIT e faça um deploy no meu GitHub
+-Eu quero que você crie um repositório no meu GitHub ou projeto e a cada alteração no projeto atualize esse repositório no GitHub automaticamente
+-Atualize o claude.md para ter essas instruções
